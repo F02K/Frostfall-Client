@@ -71,6 +71,11 @@
   }
 
   function sendBrowserMessage(payload) {
+    if (payload && typeof payload === 'object' && window.skymp && typeof window.skymp.send === 'function') {
+      window.skymp.send(payload);
+      return true;
+    }
+
     if (window.skyrimPlatform && typeof window.skyrimPlatform.sendMessage === 'function') {
       return window.skyrimPlatform.sendMessage(payload) !== false;
     }
