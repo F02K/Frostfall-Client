@@ -13,6 +13,7 @@
   var widgetRoot = null;
   var commandHistory = [];
   var commandHistoryIndex = 0;
+  var pendingLocalEchoes = [];
 
   function ready(fn) {
     if (document.readyState === 'loading') {
@@ -128,12 +129,21 @@
     return parts.length ? parts : [{ text: message, color: color }];
   }
 
+  function stripColorMarkers(raw) {
+    return String(raw || '').replace(/#\{[0-9a-fA-F]{6}\}/g, '');
+  }
+
+  function escapeColorMarkers(text) {
+    return String(text || '').replace(/#\{/g, '# {');
+  }
+
   function addMessage(raw) {
     if (!log && !getElements()) return;
 
     var message = String(raw || '');
     if (!message) return;
 
+    clearMatchingPendingEcho(message);
     renderMessage(message);
 
     window.chatMessages.push(message);
@@ -165,6 +175,65 @@
     while (log.childNodes.length > MAX_RENDERED_MESSAGES) {
       log.removeChild(log.firstChild);
     }
+
+    return line;
+  }
+
+  function removeHistoryMessage(message) {
+    for (var i = window.chatMessages.length - 1; i >= 0; i--) {
+      if (window.chatMessages[i] === message) {
+        window.chatMessages.splice(i, 1);
+        return;
+      }
+    }
+  }
+
+  function clearMatchingPendingEcho(serverMessage) {
+    if (!pendingLocalEchoes.length) return;
+
+    var normalizedServer = stripColorMarkers(serverMessage).toLowerCase();
+    var now = Date.now();
+    pendingLocalEchoes = pendingLocalEchoes.filter(function (echo) {
+      var expired = now - echo.time > 8000;
+      var matched = !expired && normalizedServer.indexOf(echo.text.toLowerCase()) >= 0;
+
+      if (matched && echo.line && echo.line.parentNode) {
+        echo.line.parentNode.removeChild(echo.line);
+        removeHistoryMessage(echo.message);
+      }
+
+      return !expired && !matched;
+    });
+  }
+
+  function addLocalEcho(text) {
+    if (!log && !getElements()) return;
+
+    var clean = String(text || '').trim();
+    if (!clean || clean === '__reload__') return;
+
+    var isSlashInput = clean.charAt(0) === '/';
+    var message = isSlashInput
+      ? '#{8fb4ff}[Command] #{dbe7ff}' + escapeColorMarkers(clean)
+      : '#{aaaaaa}[You] #{ffffff}' + escapeColorMarkers(clean);
+    var line = renderMessage(message, 'local-echo');
+
+    window.chatMessages.push(message);
+    while (window.chatMessages.length > MAX_RENDERED_MESSAGES) {
+      window.chatMessages.shift();
+    }
+
+    if (!isSlashInput) {
+      pendingLocalEchoes.push({
+        text: clean,
+        message: message,
+        line: line,
+        time: Date.now(),
+      });
+    }
+
+    saveVisibleHistory();
+    scrollToLastMessage();
   }
 
   function saveVisibleHistory() {
@@ -386,7 +455,7 @@
     var text = String(input.value || '').trim().slice(0, MAX_MESSAGE_LENGTH);
     if (text) {
       rememberInput(text);
-      sendToServer(text);
+      if (sendToServer(text)) addLocalEcho(text);
     }
     closeChat();
   }
@@ -471,7 +540,7 @@
     window.skympChat.close = closeChat;
     window.skympChat.send = function (text) {
       var value = String(text || '').trim().slice(0, MAX_MESSAGE_LENGTH);
-      if (value) sendToServer(value);
+      if (value && sendToServer(value)) addLocalEcho(value);
     };
 
     bindEvents();

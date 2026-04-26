@@ -146,11 +146,24 @@ body {
 #chat-log {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   gap: 3px;
   max-height: 238px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   margin-bottom: 8px;
+  padding-right: 4px;
+  pointer-events: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
+}
+
+#chat-log::-webkit-scrollbar {
+  width: 6px;
+}
+
+#chat-log::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 3px;
 }
 
 .chat-line {
@@ -162,6 +175,10 @@ body {
   font-size: 14px;
   line-height: 1.35;
   word-break: break-word;
+}
+
+.chat-line.local-echo {
+  opacity: 0.82;
 }
 
 #chat-form {
