@@ -9,6 +9,7 @@
   var log = null;
   var form = null;
   var input = null;
+  var widgetRoot = null;
   var commandHistory = [];
   var commandHistoryIndex = 0;
 
@@ -25,7 +26,8 @@
     log = document.getElementById('chat-log');
     form = document.getElementById('chat-form');
     input = document.getElementById('chat-input');
-    return root && log && form && input;
+    widgetRoot = document.getElementById('widget-root');
+    return root && log && form && input && widgetRoot;
   }
 
   function createWidgetStore() {
@@ -55,14 +57,49 @@
           });
         };
       },
+      addListener: function (listener) {
+        this.subscribe(listener);
+      },
+      removeListener: function (listener) {
+        listeners = listeners.filter(function (item) {
+          return item !== listener;
+        });
+      },
     };
+  }
+
+  function sendBrowserMessage(payload) {
+    if (window.skyrimPlatform && typeof window.skyrimPlatform.sendMessage === 'function') {
+      return window.skyrimPlatform.sendMessage(payload) !== false;
+    }
+
+    if (window.skymp && typeof window.skymp.send === 'function') {
+      window.skymp.send(payload);
+      return true;
+    }
+
+    console.error('[skymp5-chat] browser message bridge is not available', payload);
+    return false;
   }
 
   function ensureCompatGlobals() {
     window.skyrimPlatform = window.skyrimPlatform || {};
     window.skyrimPlatform.widgets = window.skyrimPlatform.widgets || createWidgetStore();
+    window.skyrimPlatform.sendMessage = window.skyrimPlatform.sendMessage || function (payload) {
+      if (window.skymp && typeof window.skymp.send === 'function') {
+        window.skymp.send(payload);
+        return true;
+      }
+      console.error('[skymp5-chat] window.skyrimPlatform.sendMessage is not available', payload);
+      return false;
+    };
     window.chatMessages = window.chatMessages || [];
 
+    window.mp = window.mp || {
+      send: function (type, data) {
+        return sendBrowserMessage({ type: type, data: data });
+      },
+    };
     window.playSound = window.playSound || function () {};
     window.scrollToLastMessage = scrollToLastMessage;
   }
@@ -166,6 +203,137 @@
     return false;
   }
 
+  function getTags(element) {
+    return Array.isArray(element && element.tags) ? element.tags : [];
+  }
+
+  function renderWidgets(widgets) {
+    if (!widgetRoot && !getElements()) return;
+
+    widgetRoot.innerHTML = '';
+    var list = Array.isArray(widgets) ? widgets : [];
+    widgetRoot.classList.toggle('has-widgets', list.length > 0);
+
+    list.forEach(function (widget) {
+      if (!widget || widget.type !== 'form') return;
+      widgetRoot.appendChild(renderFormWidget(widget));
+    });
+  }
+
+  function renderFormWidget(widget) {
+    var container = document.createElement('article');
+    container.className = 'ui-form';
+
+    if (widget.caption) {
+      var title = document.createElement('header');
+      title.className = 'ui-form-title';
+      title.textContent = String(widget.caption);
+      container.appendChild(title);
+    }
+
+    var body = document.createElement('section');
+    body.className = 'ui-form-body';
+
+    (Array.isArray(widget.elements) ? widget.elements : []).forEach(function (element, index) {
+      var row = document.createElement('div');
+      var tags = getTags(element);
+      row.className = 'ui-row';
+      if (tags.indexOf('ELEMENT_SAME_LINE') >= 0) row.className += ' is-inline';
+      if (tags.indexOf('ELEMENT_STYLE_MARGIN_EXTENDED') >= 0) row.className += ' is-extended';
+
+      var node = renderWidgetElement(element, index);
+      if (!node) return;
+
+      row.appendChild(node);
+
+      if (element.hint) {
+        var hint = document.createElement('div');
+        hint.className = 'ui-hint';
+        hint.textContent = String(element.hint);
+        row.appendChild(hint);
+      }
+
+      body.appendChild(row);
+    });
+
+    container.appendChild(body);
+    return container;
+  }
+
+  function renderWidgetElement(element, index) {
+    if (!element || !element.type) return null;
+
+    if (element.type === 'text') {
+      var text = document.createElement('div');
+      text.className = 'ui-text';
+      text.textContent = String(element.text || '');
+      return text;
+    }
+
+    if (element.type === 'icon') {
+      var icon = document.createElement('div');
+      icon.className = 'ui-icon-label';
+      icon.textContent = String(element.text || '');
+      return icon;
+    }
+
+    if (element.type === 'button') {
+      var button = document.createElement('button');
+      button.className = 'ui-button';
+      button.type = 'button';
+      button.disabled = Boolean(element.isDisabled);
+      button.textContent = String(element.text || 'Continue');
+      button.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (button.disabled || typeof element.click !== 'function') return;
+        try {
+          element.click();
+        } catch (err) {
+          console.error('[skymp5-chat] widget button failed', err);
+        }
+      });
+      return button;
+    }
+
+    if (element.type === 'inputText' || element.type === 'inputPass') {
+      var inputNode = document.createElement('input');
+      inputNode.className = 'ui-input';
+      inputNode.type = element.type === 'inputPass' ? 'password' : 'text';
+      inputNode.name = String(element.name || index);
+      inputNode.placeholder = String(element.placeholder || '');
+      inputNode.value = String(element.initialValue || '');
+      inputNode.disabled = Boolean(element.isDisabled);
+      inputNode.addEventListener('input', function () {
+        if (typeof element.onInput !== 'function') return;
+        element.onInput({ target: inputNode, currentTarget: inputNode });
+      });
+      return inputNode;
+    }
+
+    if (element.type === 'checkBox') {
+      var label = document.createElement('label');
+      label.className = 'ui-check';
+
+      var checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = Boolean(element.initialValue);
+      checkbox.disabled = Boolean(element.isDisabled);
+      checkbox.addEventListener('change', function () {
+        if (typeof element.setChecked === 'function') element.setChecked(checkbox.checked);
+      });
+
+      var checkText = document.createElement('span');
+      checkText.textContent = String(element.text || '');
+
+      label.appendChild(checkbox);
+      label.appendChild(checkText);
+      return label;
+    }
+
+    return null;
+  }
+
   function submitChat() {
     if (!input) return;
 
@@ -230,9 +398,12 @@
     }, true);
   }
 
-  function signalLoaded() {
-    if (window.skyrimPlatform && typeof window.skyrimPlatform.sendMessage === 'function') {
-      window.skyrimPlatform.sendMessage('front-loaded');
+  function signalLoaded(attempt) {
+    if (sendBrowserMessage('front-loaded')) return;
+    if ((attempt || 0) < 20) {
+      window.setTimeout(function () {
+        signalLoaded((attempt || 0) + 1);
+      }, 250);
     }
   }
 
@@ -243,6 +414,8 @@
     }
 
     ensureCompatGlobals();
+    window.skyrimPlatform.widgets.subscribe(renderWidgets);
+    renderWidgets(window.skyrimPlatform.widgets.get());
 
     window.skympChat = window.skympChat || {};
     window.skympChat.MAX_MESSAGE_LENGTH = MAX_MESSAGE_LENGTH;
