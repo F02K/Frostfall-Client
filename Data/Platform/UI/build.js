@@ -4,6 +4,7 @@
   var MAX_MESSAGE_LENGTH = 300;
   var MAX_RENDERED_MESSAGES = 80;
   var HISTORY_LIMIT = 30;
+  var STORAGE_KEY = 'skymp5-chat:visible-history';
 
   var root = null;
   var log = null;
@@ -133,8 +134,22 @@
     var message = String(raw || '');
     if (!message) return;
 
+    renderMessage(message);
+
+    window.chatMessages.push(message);
+    while (window.chatMessages.length > MAX_RENDERED_MESSAGES) {
+      window.chatMessages.shift();
+    }
+
+    saveVisibleHistory();
+    scrollToLastMessage();
+  }
+
+  function renderMessage(message, extraClass) {
+    if (!log && !getElements()) return;
+
     var line = document.createElement('div');
-    line.className = 'chat-line';
+    line.className = 'chat-line' + (extraClass ? ' ' + extraClass : '');
 
     parseColorMessage(message).forEach(function (part) {
       if (!part.text) return;
@@ -150,13 +165,42 @@
     while (log.childNodes.length > MAX_RENDERED_MESSAGES) {
       log.removeChild(log.firstChild);
     }
+  }
 
-    window.chatMessages.push(message);
-    while (window.chatMessages.length > MAX_RENDERED_MESSAGES) {
-      window.chatMessages.shift();
+  function saveVisibleHistory() {
+    try {
+      window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(window.chatMessages.slice(-MAX_RENDERED_MESSAGES)));
+    } catch (err) {
+      console.error('[skymp5-chat] failed to save chat history', err);
     }
+  }
 
-    scrollToLastMessage();
+  function loadVisibleHistory() {
+    try {
+      var raw = window.sessionStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      var messages = JSON.parse(raw);
+      if (!Array.isArray(messages)) return;
+      messages.slice(-MAX_RENDERED_MESSAGES).forEach(function (message) {
+        if (typeof message === 'string' && message) {
+          window.chatMessages.push(message);
+          renderMessage(message);
+        }
+      });
+      scrollToLastMessage();
+    } catch (err) {
+      console.error('[skymp5-chat] failed to load chat history', err);
+    }
+  }
+
+  function requestServerHistory(attempt) {
+    sendToServer('__reload__', { silent: true });
+
+    if ((attempt || 0) < 10) {
+      window.setTimeout(function () {
+        requestServerHistory((attempt || 0) + 1);
+      }, 2000);
+    }
   }
 
   function scrollToLastMessage() {
@@ -192,14 +236,16 @@
     commandHistoryIndex = commandHistory.length;
   }
 
-  function sendToServer(text) {
+  function sendToServer(text, options) {
     if (window.mp && typeof window.mp.send === 'function') {
       window.mp.send('cef::chat:send', text);
       return true;
     }
 
     console.error('[skymp5-chat] window.mp.send is not available');
-    addMessage('#{ff9933}[Chat] #{ffffff}Not connected to the SkyMP browser bridge.');
+    if (!options || !options.silent) {
+      addMessage('#{ff9933}[Chat] #{ffffff}Not connected to the SkyMP browser bridge.');
+    }
     return false;
   }
 
@@ -416,6 +462,7 @@
     ensureCompatGlobals();
     window.skyrimPlatform.widgets.subscribe(renderWidgets);
     renderWidgets(window.skyrimPlatform.widgets.get());
+    loadVisibleHistory();
 
     window.skympChat = window.skympChat || {};
     window.skympChat.MAX_MESSAGE_LENGTH = MAX_MESSAGE_LENGTH;
@@ -429,6 +476,7 @@
 
     bindEvents();
     signalLoaded();
+    requestServerHistory(0);
   }
 
   ready(init);
