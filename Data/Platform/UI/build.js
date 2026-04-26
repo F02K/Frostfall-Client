@@ -76,6 +76,16 @@
       return true;
     }
 
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      typeof payload.type === 'string' &&
+      window.skyrimPlatform &&
+      typeof window.skyrimPlatform.sendMessage === 'function'
+    ) {
+      return window.skyrimPlatform.sendMessage(payload.type, payload.data) !== false;
+    }
+
     if (window.skyrimPlatform && typeof window.skyrimPlatform.sendMessage === 'function') {
       return window.skyrimPlatform.sendMessage(payload) !== false;
     }
@@ -102,10 +112,9 @@
     };
     window.chatMessages = window.chatMessages || [];
 
-    window.mp = window.mp || {
-      send: function (type, data) {
-        return sendBrowserMessage({ type: type, data: data });
-      },
+    window.mp = window.mp || {};
+    window.mp.send = function (type, data) {
+      return sendBrowserMessage({ type: type, data: data });
     };
     window.playSound = window.playSound || function () {};
     window.scrollToLastMessage = scrollToLastMessage;
